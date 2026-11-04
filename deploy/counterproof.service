@@ -1,0 +1,13 @@
+[Unit]
+Description=Counterproof web app
+After=docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=/opt/counterproof
+EnvironmentFile=/opt/counterproof/.env
+ExecStart=/opt/counterproof/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 80
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

