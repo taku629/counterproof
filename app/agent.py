@@ -112,7 +112,7 @@ def run(problem: str, code: str, lang: str, seeds: int = 400, max_size: int = 8)
     explanation = ""
     try:
         explanation, _ = llm.chat([{"role": "user", "content": EXPLAIN_PROMPT.format(
-            problem=problem[:3000], lang=lang, code=code[:4000], inp=inp, exp=exp, got=got)}], max_tokens=600)
+            problem=problem[:3000], lang=lang, code=code[:4000], inp=inp, exp=exp, got=got)}], max_tokens=2000)
     except Exception as e:
         explanation = f"(explanation unavailable: {e})"
     yield {"type": "final", "verdict": "counterexample", "input": inp, "expected": exp, "got": got,

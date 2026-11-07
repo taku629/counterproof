@@ -1,7 +1,8 @@
 import asyncio, json, os, threading
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, HTMLResponse
+from fastapi import Form
 from pydantic import BaseModel
 
 from . import agent, sandbox, llm
@@ -75,9 +76,40 @@ async def detonate(raw: Raw):
     return _stream(gen)
 
 
+SETUP_TOKEN = os.getenv("SETUP_TOKEN", "")
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
+@app.get("/setup/{token}", response_class=HTMLResponse)
+def setup_form(token: str):
+    """One-time key entry so the inference key never travels through chat or git. Disabled once a key is set."""
+    if not SETUP_TOKEN or token != SETUP_TOKEN or llm.KEY:
+        return HTMLResponse("not found", 404)
+    return ('<form method="post"><label>Vultr Serverless Inference API key</label><br>'
+            '<input type="password" name="key" id="key" size="60" autocomplete="off"><br>'
+            '<button type="submit">Save key</button></form>')
+
+
+@app.post("/setup/{token}", response_class=HTMLResponse)
+def setup_save(token: str, key: str = Form(...)):
+    if not SETUP_TOKEN or token != SETUP_TOKEN or llm.KEY:
+        return HTMLResponse("not found", 404)
+    key = key.strip()
+    lines = [l for l in (ENV_FILE.read_text().splitlines() if ENV_FILE.exists() else []) if not l.startswith("VULTR_INFERENCE_KEY=")]
+    lines.append(f"VULTR_INFERENCE_KEY={key}")
+    ENV_FILE.write_text("\n".join(lines) + "\n")
+    os.chmod(ENV_FILE, 0o600)
+    llm.set_key(key)
+    try:
+        n = len(llm.list_models())
+        return f"<p id='ok'>Key saved. Inference reachable, {n} models visible.</p>"
+    except Exception as e:
+        return f"<p id='err'>Key saved but test call failed: {type(e).__name__}</p>"
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "runtime": sandbox.RUNTIME or "runc", "model": llm.MODEL or "auto"}
+    return {"ok": True, "runtime": sandbox.RUNTIME or "runc", "model": llm.MODEL or "auto", "inference_key": bool(llm.KEY)}
 
 
 @app.get("/")

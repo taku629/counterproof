@@ -4,7 +4,12 @@ import httpx
 
 BASE = os.getenv("VULTR_INFERENCE_BASE", "https://api.vultrinference.com/v1")
 KEY = os.getenv("VULTR_INFERENCE_KEY", "")
-MODEL = os.getenv("VULTR_MODEL", "")
+MODEL = os.getenv("VULTR_MODEL", "qwen3.8-27b")
+
+
+def set_key(k: str):
+    global KEY
+    KEY = k
 
 
 def list_models():
@@ -19,7 +24,8 @@ def chat(messages, temperature=0.2, max_tokens=4000):
                    headers={"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"},
                    json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens})
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"], model
+    msg = r.json()["choices"][0]["message"]
+    return (msg.get("content") or "").strip(), model
 
 
 def extract_json(text: str) -> dict:
