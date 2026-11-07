@@ -136,11 +136,14 @@ def run(problem: str, code: str, lang: str, seeds: int = 400, max_size: int = 8)
     yield {"type": "proof", "proof": proof}
     exp, got = res2["brute"]["out"].strip(), res2["sol"]["out"].strip() or f"<{res2['sol']['status']}>"
     explanation = ""
-    try:
-        explanation, _ = llm.chat([{"role": "user", "content": EXPLAIN_PROMPT.format(
-            problem=problem[:3000], lang=lang, code=code[:4000], inp=inp, exp=exp, got=got)}], max_tokens=2000)
-    except Exception as e:
-        explanation = f"(explanation unavailable: {e})"
+    prompt = EXPLAIN_PROMPT.format(problem=problem[:3000], lang=lang, code=code[:4000], inp=inp, exp=exp, got=got)
+    for budget in (2000, 5000):
+        try:
+            explanation, _ = llm.chat([{"role": "user", "content": prompt}], max_tokens=budget)
+        except Exception as e:
+            explanation = f"(explanation unavailable: {e})"
+        if explanation.strip():
+            break
     yield {"type": "final", "verdict": "counterexample", "input": inp, "expected": exp, "got": got,
            "sol_status": res2["sol"]["status"], "tested": res.get("tested"), "size": res.get("size"),
            "proof_container": r2["container"], "explanation": explanation.strip(), "oracle_status": oracle_status,
