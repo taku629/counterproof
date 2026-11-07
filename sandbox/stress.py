@@ -28,6 +28,10 @@ def _limit_child():
         resource.setrlimit(resource.RLIMIT_NPROC, (24, 24))
     except Exception:
         pass
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (160 * 2**20, 160 * 2**20))
+    except Exception:
+        pass
     os.setsid()
 
 
