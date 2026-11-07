@@ -10,6 +10,9 @@
 5. EXPLAIN- LLM explains the bug given the proven input/expected/actual.
 Every step yields an event for the UI's live log, including the sandbox "Blast Log".
 """
+import hashlib, time
+from datetime import datetime, timezone
+_now = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 from . import llm, sandbox
 
 SYS = ("You are a competitive programming expert who writes test tooling. "
@@ -20,13 +23,15 @@ PLAN_PROMPT = """Problem statement:
 {problem}
 >>>
 
-Write two Python 3 programs as a JSON object with keys "brute", "gen", "notes".
+Write two Python 3 programs as a JSON object with keys "brute", "gen", "samples", "notes".
 - "brute": reads the input from stdin exactly as the statement specifies and prints the correct answer.
   Use the most obvious exhaustive / simulation approach. Correctness over speed (inputs will be tiny).
 - "gen": usage `python gen.py SEED SIZE`. Uses random.seed(SEED) and prints ONE valid input for the
   problem where all sizes/values are small and scale with SIZE (1..8): e.g. N <= SIZE+1, values in
   [-(SIZE*2), SIZE*3] when negatives are allowed. Include edge cases (N=1, equal values, zeros) often.
   Respect every constraint in the statement.
+- "samples": the example cases copied verbatim from the statement as a list of {{"input": str, "output": str}}
+  (empty list if the statement has none). Do not invent samples.
 - "notes": one sentence on the key edge cases you target.
 """
 
@@ -36,7 +41,7 @@ brute.py:
 gen.py:
 {gen}
 Failure: {failure}
-Return the corrected JSON object with keys "brute", "gen", "notes"."""
+Return the corrected JSON object with keys "brute", "gen", "samples", "notes"."""
 
 EXPLAIN_PROMPT = """Problem:
 {problem}
@@ -56,6 +61,9 @@ def _ask(messages):
 
 def run(problem: str, code: str, lang: str, seeds: int = 400, max_size: int = 8):
     sol_name = "sol.cpp" if lang == "cpp" else "sol.py"
+    started = _now()
+    samples = []
+    oracle_status = "unverified"
     yield {"type": "step", "step": "plan", "msg": "Asking Vultr Serverless Inference for a brute-force oracle and a generator"}
     msgs = [{"role": "system", "content": SYS}, {"role": "user", "content": PLAN_PROMPT.format(problem=problem)}]
     try:
@@ -68,8 +76,15 @@ def run(problem: str, code: str, lang: str, seeds: int = 400, max_size: int = 8)
     files = {}
     for attempt in range(3):
         files = {sol_name: code, "brute.py": plan["brute"], "gen.py": plan["gen"]}
-        yield {"type": "step", "step": "smoke", "msg": f"Smoke test in a fresh sandbox (attempt {attempt + 1})"}
-        r = sandbox.run_job(files, {"mode": "smoke", "sol_lang": lang, "max_size": 2, "seeds": 10, "per_run_timeout": 2})
+        samples = [x for x in (plan.get("samples") or []) if isinstance(x, dict) and "input" in x and "output" in x]
+        samples = [{"input": str(x["input"]).rstrip() + "\n", "output": str(x["output"])} for x in samples]
+        yield {"type": "step", "step": "smoke", "msg": f"Smoke test in a fresh sandbox (attempt {attempt + 1})"
+               + (f"; validating the oracle on {len(samples)} statement sample(s)" if samples else "")}
+        r = sandbox.run_job(files, {"mode": "smoke", "sol_lang": lang, "max_size": 2, "seeds": 10, "per_run_timeout": 2,
+                                    "samples": samples})
+        if any(e.get("type") == "samples" for e in r.get("events", [])):
+            oracle_status = "validated"
+            yield {"type": "oracle", "status": "validated", "samples": len(samples)}
         yield {"type": "sandbox", "phase": "smoke", **_public(r)}
         v = (r["result"] or {}).get("verdict")
         if v == "compile_error":
@@ -108,6 +123,17 @@ def run(problem: str, code: str, lang: str, seeds: int = 400, max_size: int = 8)
         yield {"type": "final", "verdict": "flaky", "input": inp}
         return
 
+    sha = lambda t: hashlib.sha256(t.encode()).hexdigest()
+    proof = {"counterproof_version": 1, "started_utc": started, "verified_utc": _now(),
+             "model": model, "inference": "Vultr Serverless Inference", "oracle_status": oracle_status,
+             "sha256": {sol_name: sha(code), "brute.py": sha(files["brute.py"]), "gen.py": sha(files["gen.py"])},
+             "generator": {"seed": res.get("seed"), "size": res.get("size"), "cases_tested": res.get("tested")},
+             "input": inp,
+             "discovery": {"container": r["container"], "runtime": r["runtime"], "sol": _run_summary(res.get("sol")), "oracle": _run_summary(res.get("brute"))},
+             "independent_replay": {"container": r2["container"], "runtime": r2["runtime"], "verdict": "REPRODUCED",
+                                    "sol": _run_summary(res2.get("sol")), "oracle": _run_summary(res2.get("brute"))},
+             "sandbox_limits": r2["limits"]}
+    yield {"type": "proof", "proof": proof}
     exp, got = res2["brute"]["out"].strip(), res2["sol"]["out"].strip() or f"<{res2['sol']['status']}>"
     explanation = ""
     try:
@@ -117,7 +143,13 @@ def run(problem: str, code: str, lang: str, seeds: int = 400, max_size: int = 8)
         explanation = f"(explanation unavailable: {e})"
     yield {"type": "final", "verdict": "counterexample", "input": inp, "expected": exp, "got": got,
            "sol_status": res2["sol"]["status"], "tested": res.get("tested"), "size": res.get("size"),
-           "proof_container": r2["container"], "explanation": explanation.strip()}
+           "proof_container": r2["container"], "explanation": explanation.strip(), "oracle_status": oracle_status,
+           "seed": res.get("seed")}
+
+
+def _run_summary(x):
+    x = x or {}
+    return {"status": x.get("status"), "exit_code": x.get("code"), "ms": x.get("ms"), "stdout": (x.get("out") or "")[:500]}
 
 
 def _public(r):

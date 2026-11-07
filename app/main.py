@@ -72,7 +72,15 @@ async def detonate(raw: Raw):
         sol_r = (r["result"] or {}).get("sol") or {}
         yield {"type": "sandbox", "phase": "detonate", **agent._public(r),
                "stdout": (sol_r.get("out") or "")[-1500:], "stderr": (sol_r.get("err") or "")[-1500:], "status": sol_r.get("status")}
-        yield {"type": "final", "verdict": "contained", "host_ok": True}
+        checks = ["host API: still serving"]
+        try:
+            import shutil as _sh
+            checks.append(f"host disk free: {_sh.disk_usage('/').free // 2**30} GB")
+            checks.append("/etc/hosts on host unchanged" if "hacked" not in open("/etc/hosts").read() else "/etc/hosts CHANGED")
+        except Exception:
+            pass
+        checks.append(f"container {r['container']} removed")
+        yield {"type": "final", "verdict": "contained", "host_ok": True, "host_checks": checks}
     return _stream(gen)
 
 

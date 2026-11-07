@@ -23,7 +23,7 @@ pre{background:#0b0f14;border:1px solid var(--line);border-radius:6px;padding:8p
 .chip.hit{border-color:var(--warn);color:var(--warn)}
 details summary{cursor:pointer;color:var(--mute)}
 </style></head><body>
-<header><h1>Counter<span>proof</span></h1><p>Paste a problem and your solution. An agent hunts for the smallest failing input, proves it by re-execution, and every byte of untrusted code runs in a disposable, network-less sandbox.</p></header>
+<header><h1>Counter<span>proof</span></h1><span class="chip" id="stack">Vultr Serverless Inference · Vultr Cloud Compute (Tokyo) · Docker + gVisor</span><p>Paste a problem and your solution. An agent hunts for the smallest failing input, proves it by re-execution, and every byte of untrusted code runs in a disposable, network-less sandbox.</p></header>
 <main>
 <section class="card">
   <div class="tabs"><button id="tHunt">Find counterexample</button><button id="tDet" class="alt">Detonate (containment demo)</button></div>
@@ -49,7 +49,21 @@ details summary{cursor:pointer;color:var(--mute)}
 const $=id=>document.getElementById(id);
 const SAMPLE_P=`Given N integers a_1..a_N, print the maximum sum of a non-empty contiguous subarray.
 Input: first line N (1<=N<=2*10^5), second line N integers (|a_i|<=10^9).
-Output: one integer.`;
+Output: one integer.
+
+Sample 1
+Input:
+5
+1 -2 3 4 -1
+Output:
+7
+
+Sample 2
+Input:
+3
+2 2 -5
+Output:
+4`;
 const SAMPLE_C=`n=int(input())
 a=list(map(int,input().split()))
 best=0
@@ -91,6 +105,8 @@ function handle(e){
   if(e.type==='step')log(`▶ <b>${esc(e.step)}</b> ${esc(e.msg)}`);
   else if(e.type==='artifact')log(`🧠 LLM <span class="k">${esc(e.model)}</span> wrote an oracle and a generator. ${esc(e.notes)}<details><summary>brute.py</summary><pre>${esc(e.brute)}</pre></details><details><summary>gen.py</summary><pre>${esc(e.gen)}</pre></details>`);
   else if(e.type==='sandbox')log(sandboxCard(e));
+  else if(e.type==='oracle')log(`✅ <b>Oracle validated</b> <span class="k">passed ${e.samples} statement sample(s) inside the sandbox</span>`);
+  else if(e.type==='proof'){window._proof=e.proof;log(`🔏 <b>Proof Pack</b> <span class="k">sha256 sol ${esc(Object.values(e.proof.sha256)[0].slice(0,12))}… · seed ${esc(e.proof.generator.seed)} · replay ${esc(e.proof.independent_replay.container)}: REPRODUCED</span>`)}
   else if(e.type==='error'){log(`<span class="bad">✖ ${esc(e.msg)}</span>`);$('result').innerHTML=`<div class="verdict bad">Error</div><div>${esc(e.msg)}</div>`}
   else if(e.type==='final')final(e)}
 function final(e){
@@ -98,11 +114,17 @@ function final(e){
   if(e.verdict==='counterexample'){h=`<div class="verdict bad">Wrong Answer — proven counterexample</div>
    <div class="k">found after ${e.tested} random cases at size ${e.size}; replayed in ${esc(e.proof_container)} and reproduced</div>
    <label>Input</label><pre>${esc(e.input)}</pre><label>Expected (oracle)</label><pre>${esc(e.expected)}</pre><label>Your output</label><pre>${esc(e.got)}</pre>
-   <label>Why</label><div>${esc(e.explanation)}</div>`}
+   <div style="margin:8px 0"><span class="chip ${e.oracle_status==='validated'?'':'hit'}">oracle: ${esc(e.oracle_status==='validated'?'validated on statement samples':'unverified (no samples)')}</span>
+   <span class="chip">discovery sandbox → mismatch</span><span class="chip">independent replay → REPRODUCED</span></div>
+   <label>Why</label><div>${esc(e.explanation)}</div>
+   <button class="alt" onclick="dlProof()">Download Proof Pack (JSON)</button>`}
   else if(e.verdict==='no_counterexample')h=`<div class="verdict ok">No counterexample in ${e.tested} cases</div><div class="k">Not a proof of correctness, but small cases all agree with the oracle.</div>`;
-  else if(e.verdict==='contained')h=`<div class="verdict ok">Contained. Host untouched.</div><div class="k">The code ran with no network, a read-only filesystem, capped memory and processes, and the container was destroyed.</div>`;
+  else if(e.verdict==='contained')h=`<div class="verdict ok">Contained. Host untouched.</div><div class="k">The code ran with no network, a read-only filesystem, capped memory and processes, and the container was destroyed.</div>
+   <div style="margin-top:6px">${(e.host_checks||[]).map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div>`;
   else h=`<div class="verdict warn">${esc(e.verdict)}</div><pre>${esc(e.detail||e.input||'')}</pre>`;
   $('result').innerHTML=h}
+function dlProof(){const b=new Blob([JSON.stringify(window._proof,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='counterproof-proof-pack.json';a.click()}
+fetch('/api/health').then(r=>r.json()).then(h=>{$('stack').textContent=`Vultr Serverless Inference: ${h.model} · Vultr Cloud Compute (Tokyo) · sandbox runtime: ${h.runtime}`}).catch(()=>{});
 $('go').onclick=()=>stream('/api/hunt',{problem:$('problem').value,code:$('code').value,lang:$('lang').value});
 $('det').onclick=()=>stream('/api/detonate',{code:$('hostile').value,lang:'python'});
 </script></body></html>

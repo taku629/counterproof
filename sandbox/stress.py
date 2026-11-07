@@ -84,6 +84,18 @@ def main():
               "input": inp, "sol": a, "brute": b})
         return
 
+    if job["mode"] == "smoke" and job.get("samples"):
+        checked = []
+        for i, smp in enumerate(job["samples"][:5]):
+            b = run(brute, smp["input"], tl * 5)
+            ok = b["status"] == "ok" and norm(b["out"]) == norm(smp["output"])
+            checked.append({"i": i, "ok": ok})
+            if not ok:
+                emit({"type": "result", "verdict": "oracle_sample_fail", "detail":
+                      f"oracle failed statement sample {i + 1}: input={smp['input']!r} expected={smp['output']!r} got={b['out'][:200]!r} {b['err'][-300:]}"})
+                return
+        emit({"type": "samples", "checked": len(checked)})
+
     seeds = int(job.get("seeds", 300))
     max_size = int(job.get("max_size", 8))
     tested = 0
@@ -104,7 +116,7 @@ def main():
             a = run(sol, inp, tl)
             tested += 1
             if a["status"] != "ok" or norm(a["out"]) != norm(b["out"]):
-                emit({"type": "result", "verdict": "counterexample", "tested": tested, "size": size,
+                emit({"type": "result", "verdict": "counterexample", "tested": tested, "size": size, "seed": seed,
                       "input": inp, "sol": a, "brute": b})
                 return
             if tested % 25 == 0:
