@@ -58,6 +58,8 @@ def run_job(files: dict, job: dict, wall_timeout: int = 90) -> dict:
         if code == 137:
             blast.append({"kind": "oom_or_kill", "detail": f"container exited 137 (memory cap {MEM})"})
         result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        if result is None and code not in (0, None):
+            blast.append({"kind": "sandbox_exhausted", "detail": f"untrusted code exhausted the container (exit {code}, pids cap {PIDS}); container torn down, host unaffected"})
         blast += classify(result)
         return {"container": name, "runtime": RUNTIME or "runc", "exit_code": code, "ms": int((time.time() - t0) * 1000),
                 "result": result, "events": events, "stderr": err[-2000:], "blast": blast,

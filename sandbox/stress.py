@@ -6,7 +6,7 @@ Reads /src/job.json:
 Files in /src: sol.(py|cpp), brute.py, gen.py
 Prints one JSON object per line to stdout (events), last line is {"type":"result",...}.
 """
-import json, os, shutil, subprocess, sys, time
+import json, os, resource, shutil, subprocess, sys, time
 
 SRC = "/src"
 WORK = "/work"
@@ -21,16 +21,36 @@ def norm(s: str) -> str:
     return "\n".join(line.rstrip() for line in s.strip().splitlines())
 
 
+def _limit_child():
+    # untrusted children get a smaller process budget than the container, so a fork bomb
+    # exhausts its own quota and the harness can still report what happened
+    try:
+        resource.setrlimit(resource.RLIMIT_NPROC, (24, 24))
+    except Exception:
+        pass
+    os.setsid()
+
+
 def run(cmd, stdin, timeout):
     t0 = time.time()
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         cwd=WORK, preexec_fn=_limit_child)
     try:
-        p = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout, cwd=WORK)
+        out, err = p.communicate(stdin, timeout=timeout)
         status = "ok" if p.returncode == 0 else ("killed" if p.returncode < 0 else "re")
-        return {"status": status, "code": p.returncode, "out": p.stdout[-20000:], "err": p.stderr[-2000:],
+        return {"status": status, "code": p.returncode, "out": out[-20000:], "err": err[-2000:],
                 "ms": int((time.time() - t0) * 1000)}
-    except subprocess.TimeoutExpired as e:
-        return {"status": "tle", "code": None, "out": (e.stdout or "")[-2000:] if isinstance(e.stdout, str) else "",
-                "err": "", "ms": int(timeout * 1000)}
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, 9)  # kill the whole process group, including forked children
+        except Exception:
+            p.kill()
+        try:
+            out, err = p.communicate(timeout=2)
+        except Exception:
+            out, err = "", ""
+        return {"status": "tle", "code": None, "out": (out or "")[-2000:], "err": (err or "")[-2000:],
+                "ms": int(timeout * 1000)}
 
 
 def prepare(job):
@@ -92,4 +112,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        emit({"type": "result", "verdict": "harness_error", "detail": f"{type(e).__name__}: {e}"[:500]})
